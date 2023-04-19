@@ -62,104 +62,66 @@ struct TargetInfo {
 
 
 void loop() {
-  int packetSize = LoRa.parsePacket();
-  if (packetSize) {
-    Serial.print("Received packet '");
-
-    recipient = LoRa.read();       // recipient address
-    sender = LoRa.read();          // sender address
-    incomingMsgId = LoRa.read();   // incoming msg ID
-    incomingLength = LoRa.read();  // incoming msg length
-
-    char incomingMessage[incomingLength + 1];
-    for (int i = 0; i < incomingLength; i++) {
-      incomingMessage[i] = (char)LoRa.read();
-    }
-    incomingMessage[incomingLength] = '\0';
-    incoming = String(incomingMessage);
-
-    if (recipient == localAddress || recipient == 0xFF) {
-      Serial.println("This message is for me.");
-      sscanf(incoming.c_str(), "%f,%f,ID%d", &lat, &lon, &ID);
-
-      Serial.print("ID: ");
-      Serial.println(ID);
-      Serial.print("Latitude: ");
-      Serial.println(lat, 7);
-      Serial.print("Longitude: ");
-      Serial.println(lon, 7);
-
-      // Dummy GPS coordinates 1000 meters away from the received lat/lon
-      float dummyLat = lat + 0.009;
-      float dummyLon = lon + 0.009;
-
-      double distance = haversine(lat, lon, dummyLat, dummyLon);
-
-      Serial.print("Dummy Latitude: ");
-      Serial.println(dummyLat, 7);
-      Serial.print("Dummy Longitude: ");
-      Serial.println(dummyLon, 7);
-      Serial.print("Distance to dummy coordinates: ");
-      Serial.print(distance);
-      Serial.println(" meters");
-    }
-  }
 }
 
 void onReceive(int packetSize) {
+  int recipient;
+  int sender;
+  byte incomingMsgId;
+  int incomingLength;
+  float targetLatitude;
+  float targetLongitude;
+  int targetId;
+  unsigned long adjustedRoundTripTime = 0;
+
   if (packetSize == 0) return;
 
-  int recipient = LoRa.read();
-  int sender = LoRa.read();
-  int incomingMsgId = LoRa.read();
-  int incomingLength = LoRa.read();
+  recipient = LoRa.read();
+  sender = LoRa.read();
+  incomingMsgId = LoRa.read();
+  incomingLength = LoRa.read();
 
   String incoming = "";
-  for (int i = 0; i < incomingLength; i++) {
+
+  while (LoRa.available()) {
     incoming += (char)LoRa.read();
   }
 
-  Serial.println("Received: " + incoming);
-
-  if (recipient != localAddress) {
-    Serial.println("This message is not for me.");
-    return;
-  }
+  Serial.print("Message: ");
+  Serial.println(incoming);
 
   if (incoming.startsWith("calibrateResponse:")) {
-    int firstComma = incoming.indexOf(",");
-    int secondComma = incoming.indexOf(",", firstComma + 1);
+    int separatorIndex = incoming.indexOf(':');
+    int commaIndex = incoming.indexOf(',', separatorIndex + 1);
+    int secondCommaIndex = incoming.indexOf(',', commaIndex + 1);
 
-    unsigned long sentTimestamp = incoming.substring(17, firstComma).toInt();
-    unsigned long responseTimestamp = incoming.substring(firstComma + 1, secondComma).toInt();
-    String gpsLocation = incoming.substring(secondComma + 1);
+    targetLatitude = incoming.substring(separatorIndex + 1, commaIndex).toFloat();
+    targetLongitude = incoming.substring(commaIndex + 1, secondCommaIndex).toFloat();
+    targetId = incoming.substring(secondCommaIndex + 1).toInt();
 
-    unsigned long roundTripTime = millis() - sentTimestamp;
-    adjustedRoundTripTime = roundTripTime - 1000;  // Subtract the 1 second GPS waiting time
+    adjustedRoundTripTime = millis() - lastCalibrateSent;
 
-    Serial.print("Adjusted Round Trip Time: ");
-    Serial.println(adjustedRoundTripTime);
-    Serial.print("GPS Location: ");
-    Serial.println(gpsLocation);
+    double distance = calculateDistance(targetLatitude, targetLongitude, baseLatitude, baseLongitude);
+    distance = distance - adjustedRoundTripTime / 1000.0 * speedOfLight;
 
-    // Parse GPS location
-    int commaIndex = gpsLocation.indexOf(",");
-    float targetLatitude = gpsLocation.substring(0, commaIndex).toFloat();
-    float targetLongitude = gpsLocation.substring(commaIndex + 1).toFloat();
+    // Get the base station's location
+    unsigned long locationAcquisitionStartTime = millis();
+    getLocation();  // This function should update baseLatitude and baseLongitude
+    unsigned long locationAcquisitionTime = millis() - locationAcquisitionStartTime;
 
-    // Calculate distance
-    double distance = haversine(baseLatitude, baseLongitude, targetLatitude, targetLongitude);
-    Serial.print("Range to target ");
-    Serial.print(ID);
-    Serial.print(" is: ");
+    adjustedRoundTripTime = millis() - lastCalibrateSent - locationAcquisitionTime;
+
+    Serial.print("Distance to target ");
+    Serial.print(targetId);
+    Serial.print(": ");
     Serial.print(distance);
     Serial.println(" meters");
 
     // Create a new TargetInfo object and populate it with the target data
     TargetInfo newTarget;
-    newTarget.id = sender;  // Assuming the sender's address is the target ID
-    newTarget.latitude = targetLatitude;
-    newTarget.longitude = targetLongitude;
+    newTarget.id = targetId;
+    newTarget.latitude = baseLatitude;
+    newTarget.longitude = baseLongitude;
     newTarget.distance = distance;
 
     // Store the new target information in the array
@@ -171,4 +133,87 @@ void onReceive(int packetSize) {
     }
   }
 }
+
+String getGpsLocation() {
+  smartDelay(1000); // Wait for a short time to collect GPS data
+
+  if (gps.location.isValid()) {
+    float baseLatitude = gps.location.lat();
+    float baseLongitude = gps.location.lng();
+
+    String location = String(baseLatitude, 6) + "," + String(baseLongitude, 6);
+    return location;
+  } else {
+    Serial.println("GPS location is not valid.");
+    return "INVALID";
+  }
+}
+
+// This custom version of delay() ensures that the gps object
+// is being "fed".
+static void smartDelay(unsigned long ms) {
+  unsigned long start = millis();
+  do {
+    while (hs.available())
+      gps.encode(hs.read());
+  } while (millis() - start < ms);
+}
+
+static void printFloat(float val, bool valid, int len, int prec) {
+  if (!valid) {
+    while (len-- > 1)
+      Serial.print('*');
+    Serial.print(' ');
+  } else {
+    Serial.print(val, prec);
+    int vi = abs((int)val);
+    int flen = prec + (val < 0.0 ? 2 : 1);  // . and -
+    flen += vi >= 1000 ? 4 : vi >= 100 ? 3
+                           : vi >= 10  ? 2
+                                       : 1;
+    for (int i = flen; i < len; ++i)
+      Serial.print(' ');
+  }
+  smartDelay(0);
+}
+
+static void printInt(unsigned long val, bool valid, int len) {
+  char sz[32] = "*****************";
+  if (valid)
+    sprintf(sz, "%ld", val);
+  sz[len] = 0;
+  for (int i = strlen(sz); i < len; ++i)
+    sz[i] = ' ';
+  if (len > 0)
+    sz[len - 1] = ' ';
+  Serial.print(sz);
+  smartDelay(0);
+}
+
+static void printDateTime(TinyGPSDate &d, TinyGPSTime &t) {
+  if (!d.isValid()) {
+    Serial.print(F("********** "));
+  } else {
+    char sz[32];
+    sprintf(sz, "%02d/%02d/%02d ", d.month(), d.day(), d.year());
+    Serial.print(sz);
+  }
+
+  if (!t.isValid()) {
+    Serial.print(F("******** "));
+  } else {
+    char sz[32];
+    sprintf(sz, "%02d:%02d:%02d ", t.hour(), t.minute(), t.second());
+    Serial.print(sz);
+  }
+
+  printInt(d.age(), d.isValid(), 5);
+  smartDelay(0);
+}
+
+static void printStr(const char *str, int len) {
+  int slen = strlen(str);
+  for (int i = 0; i < len; ++i)
+    Serial.print(i < slen ? str[i] : ' ');
+  smartDelay(0);
 }
