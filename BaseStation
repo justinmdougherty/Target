@@ -95,8 +95,8 @@ void onReceive(int packetSize) {
     int commaIndex = incoming.indexOf(',', separatorIndex + 1);
     int secondCommaIndex = incoming.indexOf(',', commaIndex + 1);
 
-    targetLatitude = incoming.substring(separatorIndex + 1, commaIndex).toFloat();
-    targetLongitude = incoming.substring(commaIndex + 1, secondCommaIndex).toFloat();
+    String targetLatitude = incoming.substring(18, incoming.indexOf('.'));
+    String targetLongitude = incoming.substring(incoming.indexOf('.') + 1, incoming.indexOf(' ', incoming.indexOf('.')));
     targetId = incoming.substring(secondCommaIndex + 1).toInt();
 
     adjustedRoundTripTime = millis() - lastCalibrateSent;
@@ -135,7 +135,7 @@ void onReceive(int packetSize) {
 }
 
 String getGpsLocation() {
-  smartDelay(1000); // Wait for a short time to collect GPS data
+  smartDelay(1000);  // Wait for a short time to collect GPS data
 
   if (gps.location.isValid()) {
     float baseLatitude = gps.location.lat();
