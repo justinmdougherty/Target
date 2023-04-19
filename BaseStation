@@ -19,6 +19,7 @@ byte incomingLength;
 float lat, lon;
 int ID;
 
+unsigned long adjustedRoundTripTime = 0;
 
 
 const double RADIUS_OF_EARTH = 6371000;  // Earth's radius in meters
@@ -93,3 +94,53 @@ void loop() {
     }
   }
 }
+
+void onReceive(int packetSize) {
+  if (packetSize == 0) return;
+
+  int recipient = LoRa.read();
+  int sender = LoRa.read();
+  int incomingMsgId = LoRa.read();
+  int incomingLength = LoRa.read();
+
+  String incoming = "";
+  for (int i = 0; i < incomingLength; i++) {
+    incoming += (char)LoRa.read();
+  }
+
+  Serial.println("Received: " + incoming);
+
+  if (recipient != localAddress) {
+    Serial.println("This message is not for me.");
+    return;
+  }
+
+  if (incoming.startsWith("calibrateResponse:")) {
+    int firstComma = incoming.indexOf(",");
+    int secondComma = incoming.indexOf(",", firstComma + 1);
+
+    unsigned long sentTimestamp = incoming.substring(17, firstComma).toInt();
+    unsigned long responseTimestamp = incoming.substring(firstComma + 1, secondComma).toInt();
+    String gpsLocation = incoming.substring(secondComma + 1);
+
+    unsigned long roundTripTime = millis() - sentTimestamp;
+    adjustedRoundTripTime = roundTripTime - 1000; // Subtract the 1 second GPS waiting time
+
+    Serial.print("Adjusted Round Trip Time: ");
+    Serial.println(adjustedRoundTripTime);
+    Serial.print("GPS Location: ");
+    Serial.println(gpsLocation);
+
+    // Parse GPS location
+    int commaIndex = gpsLocation.indexOf(",");
+    float targetLatitude = gpsLocation.substring(0, commaIndex).toFloat();
+    float targetLongitude = gpsLocation.substring(commaIndex + 1).toFloat();
+
+    // Calculate distance
+    double distance = haversine(baseLatitude, baseLongitude, targetLatitude, targetLongitude);
+    Serial.print("Range to target "); Serial.print(ID); Serial.print(" is: "); 
+    Serial.print(distance);
+    Serial.println(" meters");
+  }
+}
+
