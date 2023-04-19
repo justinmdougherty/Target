@@ -1,150 +1,153 @@
-#include <TinyGPSPlus.h>
 #include <SPI.h>
 #include <LoRa.h>
+#include <math.h>
+
+#define SCK 42
+#define MISO 41
+#define MOSI 2
+#define SS 1
+#define rst 5
+#define dio0 4
 
 
+byte localAddress = 0xFF;
+int recipient;
+String incoming;
+byte sender;
+byte incomingMsgId;
+byte incomingLength;
+float lat, lon;
+int ID;
 
-// The TinyGPSPlus object
-TinyGPSPlus gps;
+unsigned long adjustedRoundTripTime = 0;
+const int maxTargets = 10;
+TargetInfo targets[maxTargets];
+int targetCount = 0;
 
-// The serial connection to the GPS device
-#define hs Serial1
 
-//define the pins used by the transceiver module
-#define cs 8
-#define rst 4
-#define dio0 7
+const double RADIUS_OF_EARTH = 6371000;  // Earth's radius in meters
 
-int counter = 0;
-const int hitIndication = "Hit";
-const int triggerPin = 14;
-byte msgCount = 1;
-float Latitude;
-float Longitude;
-int ID = 1;
-byte localAddress = 0xBB;
-byte destination = 0xFF;
+double haversine(double lat1, double lon1, double lat2, double lon2) {
+  double dLat = (lat2 - lat1) * M_PI / 180.0;
+  double dLon = (lon2 - lon1) * M_PI / 180.0;
+
+  lat1 = lat1 * M_PI / 180.0;
+  lat2 = lat2 * M_PI / 180.0;
+
+  double a = pow(sin(dLat / 2), 2) + pow(sin(dLon / 2), 2) * cos(lat1) * cos(lat2);
+  double c = 2 * asin(sqrt(a));
+  return RADIUS_OF_EARTH * c;
+}
+
 
 void setup() {
   Serial.begin(115200);
-  Serial.print("LoRa_Sender_1.3_GPS");
-  Serial1.begin(9600);
+  SPI.begin(SCK, MISO, MOSI, SS);
+  Serial.println("LoRa Receiver");
+  LoRa.setPins(SS, rst, dio0);
 
-  pinMode(triggerPin, INPUT_PULLUP);
-  digitalWrite(13, LOW);
-
-  LoRa.setPins(cs, rst, dio0);
-  if (!LoRa.begin(915E6)) {
-    Serial.println("Starting LoRa failed!");
-    while (1)
-      ;
+  while (!LoRa.begin(915E6)) {
+    Serial.println(".");
+    delay(500);
   }
   Serial.println("LoRa Initializing OK!");
 }
 
+struct TargetInfo {
+  int id;
+  float latitude;
+  float longitude;
+  double distance;
+};
+
+
 void loop() {
-
-  smartDelay(10);
-
-  int packetSize = LoRa.parsePacket();
-  if (packetSize) {
-    String outgoing = String(Latitude) + String(Longitude) + String(ID);
-    // send packet
-    LoRa.beginPacket();
-    LoRa.write(destination);
-    LoRa.write(localAddress);
-    LoRa.write(msgCount);
-    LoRa.write(outgoing.length());
-    LoRa.write(Latitude);
-    LoRa.write(Longitude);
-    LoRa.write(ID);
-    LoRa.endPacket();
-    msgCount++;
-  }
-
-  if (digitalRead(triggerPin) == LOW) {
-    Serial.println("Hit");
-    digitalWrite(13, HIGH);
-    if (gps.location.isValid()) {
-      LoRa.beginPacket();
-      LoRa.print("Hit");
-      LoRa.print(ID);
-      LoRa.endPacket();
-   
-    }
-    //For debugging
-    digitalWrite(13, LOW);
-    Serial.println("END");
-  }
-
-  if (millis() > 5000 && gps.charsProcessed() < 10)
-    Serial.println(F("No GPS data received: check wiring"));
-}
-
-//Target hit trigger
-void handleTriggerEvent() {
-  if (digitalRead(triggerPin) == LOW) {
-    String hitMessage = String(hitIndication) + String(ID);
-    sendMessage(hitMessage);
-    Serial.println("Trigger event occurred. Message sent: " + message);
-  }
-}
-
-void sendHitMessage(String hitMessage) {
-  // Check if there's enough space for the message
-  if (message.length() > 250) {
-    Serial.println("Message too long.");
-    return;
-  }
-
-  LoRa.beginPacket();
-  LoRa.write(destination);
-  LoRa.write(localAddress);
-  LoRa.write(msgCount);
-  LoRa.write(hitMessage.length());
-
-  // Write the message string to the packet
-  for (size_t i = 0; i < hitMessage.length(); i++) {
-    LoRa.write(hitMessage[i]);
-  }
-
-  LoRa.endPacket();
-  msgCount++;
 }
 
 void onReceive(int packetSize) {
+  int recipient;
+  int sender;
+  byte incomingMsgId;
+  int incomingLength;
+  float targetLatitude;
+  float targetLongitude;
+  int targetId;
+  unsigned long adjustedRoundTripTime = 0;
+
   if (packetSize == 0) return;
 
-  String received = "";
+  recipient = LoRa.read();
+  sender = LoRa.read();
+  incomingMsgId = LoRa.read();
+  incomingLength = LoRa.read();
+
+  String incoming = "";
+
   while (LoRa.available()) {
-    received += (char)LoRa.read();
+    incoming += (char)LoRa.read();
   }
 
-  Serial.println("Received: " + received);
+  Serial.print("Message: ");
+  Serial.println(incoming);
 
-  if (received == "calibrate") {
-    // Assuming you have a function called getGpsLocation() that returns the current GPS location as a String
-    String gpsLocation = getGpsLocation();
-    sendMessage(gpsLocation);
-    Serial.println("Calibration request received. GPS location sent: " + gpsLocation);
+  if (incoming.startsWith("calibrateResponse:")) {
+    int separatorIndex = incoming.indexOf(':');
+    int commaIndex = incoming.indexOf(',', separatorIndex + 1);
+    int secondCommaIndex = incoming.indexOf(',', commaIndex + 1);
+
+    String targetLatitude = incoming.substring(18, incoming.indexOf('.'));
+    String targetLongitude = incoming.substring(incoming.indexOf('.') + 1, incoming.indexOf(' ', incoming.indexOf('.')));
+    targetId = incoming.substring(secondCommaIndex + 1).toInt();
+
+    adjustedRoundTripTime = millis() - lastCalibrateSent;
+
+    double distance = calculateDistance(targetLatitude, targetLongitude, baseLatitude, baseLongitude);
+    distance = distance - adjustedRoundTripTime / 1000.0 * speedOfLight;
+
+    // Get the base station's location
+    unsigned long locationAcquisitionStartTime = millis();
+    getLocation();  // This function should update baseLatitude and baseLongitude
+    unsigned long locationAcquisitionTime = millis() - locationAcquisitionStartTime;
+
+    adjustedRoundTripTime = millis() - lastCalibrateSent - locationAcquisitionTime;
+
+    Serial.print("Distance to target ");
+    Serial.print(targetId);
+    Serial.print(": ");
+    Serial.print(distance);
+    Serial.println(" meters");
+
+    // Create a new TargetInfo object and populate it with the target data
+    TargetInfo newTarget;
+    newTarget.id = targetId;
+    newTarget.latitude = baseLatitude;
+    newTarget.longitude = baseLongitude;
+    newTarget.distance = distance;
+
+    // Store the new target information in the array
+    if (targetCount < maxTargets) {
+      targets[targetCount] = newTarget;
+      targetCount++;
+    } else {
+      Serial.println("Warning: Max targets reached. Ignoring new target.");
+    }
   }
 }
 
 String getGpsLocation() {
-  smartDelay(1000); // Wait for a short time to collect GPS data
+  smartDelay(1000);  // Wait for a short time to collect GPS data
 
   if (gps.location.isValid()) {
-    float targetLatitude = gps.location.lat();
-    float targetLongitude = gps.location.lng();
+    float baseLatitude = gps.location.lat();
+    float baseLongitude = gps.location.lng();
 
-    String location = String(targetLatitude, 6) + "," + String(targetLongitude, 6);
+    String location = String(baseLatitude, 6) + "," + String(baseLongitude, 6);
     return location;
   } else {
     Serial.println("GPS location is not valid.");
     return "INVALID";
   }
 }
-
 
 // This custom version of delay() ensures that the gps object
 // is being "fed".
