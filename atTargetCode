@@ -15,8 +15,8 @@ TinyGPSPlus gps;
 #define dio0 7
 
 int counter = 0;
-
-int triggerPin = 14;
+const int hitIndication = "Hit";
+const int triggerPin = 14;
 byte msgCount = 1;
 float Latitude;
 float Longitude;
@@ -78,6 +78,55 @@ void loop() {
 
   if (millis() > 5000 && gps.charsProcessed() < 10)
     Serial.println(F("No GPS data received: check wiring"));
+}
+
+//Target hit trigger
+void handleTriggerEvent() {
+  if (digitalRead(triggerPin) == LOW) {
+    String hitMessage = String(hitIndication) + String(ID);
+    sendMessage(hitMessage);
+    Serial.println("Trigger event occurred. Message sent: " + message);
+  }
+}
+
+void sendHitMessage(String hitMessage) {
+  // Check if there's enough space for the message
+  if (message.length() > 250) {
+    Serial.println("Message too long.");
+    return;
+  }
+
+  LoRa.beginPacket();
+  LoRa.write(destination);
+  LoRa.write(localAddress);
+  LoRa.write(msgCount);
+  LoRa.write(hitMessage.length());
+
+  // Write the message string to the packet
+  for (size_t i = 0; i < hitMessage.length(); i++) {
+    LoRa.write(hitMessage[i]);
+  }
+
+  LoRa.endPacket();
+  msgCount++;
+}
+
+void onReceive(int packetSize) {
+  if (packetSize == 0) return;
+
+  String received = "";
+  while (LoRa.available()) {
+    received += (char)LoRa.read();
+  }
+
+  Serial.println("Received: " + received);
+
+  if (received == "calibrate") {
+    // Assuming you have a function called getGpsLocation() that returns the current GPS location as a String
+    String gpsLocation = getGpsLocation();
+    sendMessage(gpsLocation);
+    Serial.println("Calibration request received. GPS location sent: " + gpsLocation);
+  }
 }
 
 
