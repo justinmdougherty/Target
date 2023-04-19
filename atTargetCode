@@ -129,6 +129,21 @@ void onReceive(int packetSize) {
   }
 }
 
+String getGpsLocation() {
+  smartDelay(1000); // Wait for a short time to collect GPS data
+
+  if (gps.location.isValid()) {
+    float targetLatitude = gps.location.lat();
+    float targetLongitude = gps.location.lng();
+
+    String location = String(targetLatitude, 6) + "," + String(targetLongitude, 6);
+    return location;
+  } else {
+    Serial.println("GPS location is not valid.");
+    return "INVALID";
+  }
+}
+
 
 // This custom version of delay() ensures that the gps object
 // is being "fed".
