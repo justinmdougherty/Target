@@ -20,6 +20,9 @@ float lat, lon;
 int ID;
 
 unsigned long adjustedRoundTripTime = 0;
+const int maxTargets = 10;
+TargetInfo targets[maxTargets];
+int targetCount = 0;
 
 
 const double RADIUS_OF_EARTH = 6371000;  // Earth's radius in meters
@@ -49,6 +52,14 @@ void setup() {
   }
   Serial.println("LoRa Initializing OK!");
 }
+
+struct TargetInfo {
+  int id;
+  float latitude;
+  float longitude;
+  double distance;
+};
+
 
 void loop() {
   int packetSize = LoRa.parsePacket();
@@ -124,7 +135,7 @@ void onReceive(int packetSize) {
     String gpsLocation = incoming.substring(secondComma + 1);
 
     unsigned long roundTripTime = millis() - sentTimestamp;
-    adjustedRoundTripTime = roundTripTime - 1000; // Subtract the 1 second GPS waiting time
+    adjustedRoundTripTime = roundTripTime - 1000;  // Subtract the 1 second GPS waiting time
 
     Serial.print("Adjusted Round Trip Time: ");
     Serial.println(adjustedRoundTripTime);
@@ -138,9 +149,26 @@ void onReceive(int packetSize) {
 
     // Calculate distance
     double distance = haversine(baseLatitude, baseLongitude, targetLatitude, targetLongitude);
-    Serial.print("Range to target "); Serial.print(ID); Serial.print(" is: "); 
+    Serial.print("Range to target ");
+    Serial.print(ID);
+    Serial.print(" is: ");
     Serial.print(distance);
     Serial.println(" meters");
+
+    // Create a new TargetInfo object and populate it with the target data
+    TargetInfo newTarget;
+    newTarget.id = sender;  // Assuming the sender's address is the target ID
+    newTarget.latitude = targetLatitude;
+    newTarget.longitude = targetLongitude;
+    newTarget.distance = distance;
+
+    // Store the new target information in the array
+    if (targetCount < maxTargets) {
+      targets[targetCount] = newTarget;
+      targetCount++;
+    } else {
+      Serial.println("Warning: Max targets reached. Ignoring new target.");
+    }
   }
 }
-
+}
