@@ -2,12 +2,6 @@
 #include <SPI.h>
 #include <LoRa.h>
 
-/*
-   This sample code demonstrates the normal use of a TinyGPSPlus (TinyGPSPlus) object.
-   It requires the use of SoftwareSerial, and assumes that you have a
-   4800-baud serial GPS device hooked up on pins 4(rx) and 3(tx).
-*/
-
 
 // The TinyGPSPlus object
 TinyGPSPlus gps;
@@ -23,10 +17,15 @@ TinyGPSPlus gps;
 int counter = 0;
 
 int triggerPin = 14;
-const int target = 1;
+byte msgCount = 1;
+float Latitude;
+float Longitude;
+int ID = 1;
+byte localAddress = 0xBB;
+byte destination = 0xFF;
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.print("LoRa_Sender_1.3_GPS");
   Serial1.begin(9600);
 
@@ -34,84 +33,51 @@ void setup() {
   digitalWrite(13, LOW);
 
   LoRa.setPins(cs, rst, dio0);
-  
+  if (!LoRa.begin(915E6)) {
+    Serial.println("Starting LoRa failed!");
+    while (1)
+      ;
+  }
+  Serial.println("LoRa Initializing OK!");
 }
 
 void loop() {
-
-
-  // Serial.print("Sending packet: ");
-  // Serial.println(counter);
-
-  // // send packet
-  // LoRa.beginPacket();
-  // LoRa.print("hello ");
-  // LoRa.print(counter);
-  // LoRa.endPacket();
-
-  // counter++;
-
-  // delay(5000);
-
 
   smartDelay(10);
 
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
+    String outgoing = String(Latitude) + String(Longitude) + String(ID);
+    // send packet
     LoRa.beginPacket();
-    LoRa.print("Target: ");
-    LoRa.print(target);
-    LoRa.print("Lat: ");
-    LoRa.print(gps.location.lat(), 6);
-    LoRa.print("Lon: ");
-    LoRa.print(gps.location.lng(), 6);
+    LoRa.write(destination);
+    LoRa.write(localAddress);
+    LoRa.write(msgCount);
+    LoRa.write(outgoing.length());
+    LoRa.write(Latitude);
+    LoRa.write(Longitude);
+    LoRa.write(ID);
     LoRa.endPacket();
+    msgCount++;
   }
 
   if (digitalRead(triggerPin) == LOW) {
-    Serial.println("Trigger");
+    Serial.println("Hit");
     digitalWrite(13, HIGH);
     if (gps.location.isValid()) {
-        LoRa.beginPacket();
-        LoRa.print("Target: ");
-        LoRa.print(target);
-        LoRa.print("Lat: ");
-        LoRa.print(gps.location.lat(), 6);
-        LoRa.print("Lon: ");
-        LoRa.print(gps.location.lng(), 6);
-        LoRa.endPacket();
-    } else {
-        Serial.println("GPS location is not valid");
+      LoRa.beginPacket();
+      LoRa.print("Hit");
+      LoRa.print(ID);
+      LoRa.endPacket();
+   
     }
+    //For debugging
     digitalWrite(13, LOW);
-    Serial.println("END");
-}
-
-/*
-  if (digitalRead(triggerPin) == LOW) {
-    Serial.println("Trigger");
-    digitalWrite(13, HIGH);
-    LoRa.beginPacket();
-    LoRa.print("Target: ");
-    LoRa.print(target);
-    LoRa.print("Lat: ");
-    LoRa.print(gps.location.lat(), 6);
-    LoRa.print("Lon: ");
-    LoRa.print(gps.location.lng(), 6);
-    
-    LoRa.endPacket();
-
-    digitalWrite(13, LOW);
-
     Serial.println("END");
   }
-  */
 
-
-if (millis() > 5000 && gps.charsProcessed() < 10)
-Serial.println(F("No GPS data received: check wiring"));
-
-
+  if (millis() > 5000 && gps.charsProcessed() < 10)
+    Serial.println(F("No GPS data received: check wiring"));
 }
 
 
