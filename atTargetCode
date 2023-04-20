@@ -1,8 +1,8 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <TinyGPS++.h>
+#include <math.h>
 
-//LoRa SPI pins
 #define ss 8
 #define rst 4
 #define dio0 7
@@ -38,88 +38,99 @@ void setup() {
 }
 
 void loop() {
+  onReceive(LoRa.parsePacket());
+
+
   if (hs.available()) {
     gps.encode(hs.read());
-
     smartDelay(10);
   }
 }
-  void onReceive(int packetSize) {
-    int recipient;
-    int sender;
-    byte incomingMsgId;
-    int incomingLength;
 
-    if (packetSize == 0) return;
 
-    recipient = LoRa.read();
-    sender = LoRa.read();
-    incomingMsgId = LoRa.read();
-    incomingLength = LoRa.read();
+void onReceive(int packetSize) {
+  int recipient;
+  int sender;
+  byte incomingMsgId;
+  int incomingLength;
 
-    String incoming = "";
+  if (packetSize == 0) return;
 
-    while (LoRa.available()) {
-      incoming += (char)LoRa.read();
-    }
+  recipient = LoRa.read();
+  sender = LoRa.read();
+  incomingMsgId = LoRa.read();
+  incomingLength = LoRa.read();
 
-    Serial.print("Message: ");
-    Serial.println(incoming);
+  String incoming = "";
 
-    // Check if the received message is a "calibrate" message
-    if (incoming.startsWith("calibrate")) {
-      // Get the target's GPS location
-      getLocation();
-
-      // Create the response message
-      String response = "calibrateResponse:";
-      response += String(targetLatitude) + "," + String(targetLongitude) + "," + String(targetID);
-
-      // Send the response
-      sendMessage(response);
-    }
+  while (LoRa.available()) {
+    incoming += (char)LoRa.read();
   }
 
+  Serial.print("Message: ");
+  Serial.println(incoming);
 
-  String getGpsLocation() {
-    smartDelay(1000);  // Wait for a short time to collect GPS data
+  // Check if the received message is a "calibrate" message
+  if (incoming.startsWith("calibrate")) {
+    // Get the target's GPS location
+    getLocation();
 
-    if (gps.location.isValid()) {
-      float baseLatitude = gps.location.lat();
-      float baseLongitude = gps.location.lng();
+    // Create the response message
+    String response = "calibrateResponse:";
+    response += String(targetLatitude) + "," + String(targetLongitude) + "," + String(targetID);
 
-      String location = String(baseLatitude, 6) + "," + String(baseLongitude, 6);
-      return location;
-    } else {
-      Serial.println("GPS location is not valid.");
-      return "INVALID";
-    }
+    // Send the response
+    sendMessage(response);
+  }
+}
+
+
+String getLocation() {
+
+  smartDelay(1000);  // Wait for a short time to collect GPS data
+
+  float targetLatitude;
+  float targetLongitude;
+  int targetID;
+
+  if (gps.location.isValid()) {
+    targetLatitude = gps.location.lat();
+    targetLongitude = gps.location.lng();
+    targetID = 1;
+
+    String location = String(targetLatitude, 6) + "," + String(targetLongitude, 6) + "," + String(targetID);
+    return location;
+  } else {
+    Serial.println("GPS location is not valid.");
+    return "INVALID";
+  }
+}
+
+void sendMessage(String response) {
+  // Check if there's enough space for the message
+  if (response.length() > 250) {
+
+    Serial.println("Message too long.");
+    return;
   }
 
-  void sendMessage(String response) {
-    // Check if there's enough space for the message
-    if (message.length() > 250) {
-      Serial.println("Message too long.");
-      return;
-    }
+  LoRa.beginPacket();
+  LoRa.write(destination);
+  LoRa.write(localAddress);
+  LoRa.write(msgCount);
+  LoRa.write(response.length());
 
-    LoRa.beginPacket();
-    LoRa.write(destination);
-    LoRa.write(localAddress);
-    LoRa.write(msgCount);
-    LoRa.write(response.length());
-
-    // Write the message string to the packet
-    for (size_t i = 0; i < response.length(); i++) {
-      LoRa.write(response[i]);
-    }
-
-    LoRa.endPacket();
-    msgCount++;
+  // Write the message string to the packet
+  for (size_t i = 0; i < response.length(); i++) {
+    LoRa.write(response[i]);
   }
 
+  LoRa.endPacket();
+  msgCount++;
+}
 
-  // This custom version of delay() ensures that the gps object
+
+// This custom version of delay() ensures that the gps object
 // is being "fed".
 static void smartDelay(unsigned long ms) {
   unsigned long start = millis();
