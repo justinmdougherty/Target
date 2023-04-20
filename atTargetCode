@@ -7,6 +7,8 @@
 #define rst 4
 #define dio0 7
 
+const int targetID = 1;
+
 // The TinyGPSPlus object
 TinyGPSPlus gps;
 
@@ -45,9 +47,10 @@ void loop() {
     gps.encode(hs.read());
     smartDelay(10);
   }
+  impactTriggerEvent();
 }
 
-
+//LoRa message received function
 void onReceive(int packetSize) {
   int recipient;
   int sender;
@@ -75,37 +78,44 @@ void onReceive(int packetSize) {
     // Get the target's GPS location
     getLocation();
 
-    // Create the response message
-    String response = "calibrateResponse:";
-    response += String(targetLatitude) + "," + String(targetLongitude) + "," + String(targetID);
+    
+    // Create the response message for calibrate
+    String calibrateResponse = "calibrateResponse:";
+    calibrateResponse += String(targetLatitude) + "," + String(targetLongitude) + "," + String(targetID);
 
     // Send the response
-    sendMessage(response);
+    sendMessage(calibrateResponse);
+
+  // Check if the received message is a "shotTrigger" message
+  }else{
+    if (incoming.startsWith("shotTrigger")) {
+      digitalWrite(13, HIGH);
+      delay(1000);
+      digitalWrite(13, LOW);
+
+   // Create the response message
+    String shotTriggerResponse = "shotTriggerResponse:";
+    shotTriggerResponse += String(targetID);
+
+    // Send the response
+    sendMessage(shotTriggerResponse);      
+    }
+
+  }
+  
+}
+
+//When target is triggered build message response and send it to basestation
+void impactTriggerEvent() {
+
+  if (digitalRead(triggerPin) == LOW) {
+    String impactTriggerResponse = "hit:" + String(targetID);
+    sendMessage(impactTriggerResponse);
+    Serial.println("Trigger event occurred. Message sent: " + String impactTriggerResponse);
   }
 }
 
-
-String getLocation() {
-
-  smartDelay(1000);  // Wait for a short time to collect GPS data
-
-  float targetLatitude;
-  float targetLongitude;
-  int targetID;
-
-  if (gps.location.isValid()) {
-    targetLatitude = gps.location.lat();
-    targetLongitude = gps.location.lng();
-    targetID = 1;
-
-    String location = String(targetLatitude, 6) + "," + String(targetLongitude, 6) + "," + String(targetID);
-    return location;
-  } else {
-    Serial.println("GPS location is not valid.");
-    return "INVALID";
-  }
-}
-
+//Calibration response function
 void sendMessage(String response) {
   // Check if there's enough space for the message
   if (response.length() > 250) {
@@ -129,7 +139,26 @@ void sendMessage(String response) {
   msgCount++;
 }
 
+//GPS Functions Here
 
+String getLocation() {
+
+  smartDelay(1000);  // Wait for a short time to collect GPS data
+
+  float targetLatitude;
+  float targetLongitude;
+
+  if (gps.location.isValid()) {
+    targetLatitude = gps.location.lat();
+    targetLongitude = gps.location.lng();
+
+    String location = String(targetLatitude, 6) + "," + String(targetLongitude, 6) + "," + String(targetID);
+    return location;
+  } else {
+    Serial.println("GPS location is not valid.");
+    return "INVALID";
+  }
+}
 // This custom version of delay() ensures that the gps object
 // is being "fed".
 static void smartDelay(unsigned long ms) {
