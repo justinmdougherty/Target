@@ -3,9 +3,12 @@
 #include <TinyGPS++.h>
 #include <math.h>
 
-#define ss 8
-#define rst 4
-#define dio0 7
+#define SCK 42
+#define MISO 41
+#define MOSI 2
+#define SS 1
+#define rst 5
+#define dio0 4
 
 const int triggerPin = 14;
 const int triggerID = 1;
@@ -25,7 +28,7 @@ const int numTargets = 10;
 long impactTimes[numTargets] = { 0 };
 int impactCount = 0;
 
-const double RADIUS_OF_EARTH = 6371000;  // Earth's radius in meters
+const double RADIUS_OF_EARTH = 6371000;
 
 double haversine(double lat1, double lon1, double lat2, double lon2) {
   double dLat = (lat2 - lat1) * M_PI / 180.0;
@@ -41,219 +44,109 @@ double haversine(double lat1, double lon1, double lat2, double lon2) {
 
 void setup() {
   Serial.begin(115200);
-  Serial1.begin(9600);
-  Serial.println("LoRa Receiver");
-
-  LoRa.setPins(ss, rst, dio0);
-
-  while (!LoRa.begin(915E6)) {
-    Serial.println(".");
-    delay(500);
-  }
-  Serial.println("LoRa Initializing OK!");
+  hs.begin(9600);
+  SPI.begin(SCK, MISO, MOSI, SS);
+  LoRa.setPins(SS, rst, dio0);
+  LoRa.begin(915E6);
+  LoRa.onReceive(onReceive);
+  LoRa.receive();
 
   pinMode(triggerPin, INPUT_PULLUP);
 }
 
 void loop() {
-  onReceive(LoRa.parsePacket());
+  getLocation();
+  readCalibrateTrigger();
+  readShotTrigger();
+  delay(1000);
+}
+
+void getLocation() {
+  while (hs.available() > 0) {
+    if (gps.encode(hs.read())) {
+      if (gps.location.isValid()) {
+        baseLatitude = gps.location.lat();
+        baseLongitude = gps.location.lng();
+      }
+    }
+  }
+}
+
+void readCalibrateTrigger() {
   if (digitalRead(triggerPin) == LOW) {
-    sendShotTrigger();
+    startTime = millis();
+    sendMessage("calibrate");
+  }
+}
+
+void readShotTrigger() {
+  if (digitalRead(triggerPin) == LOW) {
     shotTriggerTime = millis();
+    sendMessage("shotTrigger");
   }
-  if (hs.available()) {
-    gps.encode(hs.read());
+}
 
-    smartDelay(10);
+void sendMessage(String message) {
+  LoRa.beginPacket();
+  LoRa.print(message);
+  LoRa.endPacket();
+}
+
+void onReceive(int packetSize) {
+  if (packetSize == 0) return;
+
+  String incoming = "";
+  while (LoRa.available()) {
+    incoming += (char)LoRa.read();
   }
 
-  void onReceive(int packetSize) {
-    if (packetSize == 0) return;
+  Serial.print("Message: ");
+  Serial.println(incoming);
 
-    int recipient = LoRa.read();
-    int sender = LoRa.read();
-    byte incomingMsgId = LoRa.read();
-    int incomingLength = LoRa.read();
+  if (incoming.startsWith("calibrateResponse:")) {
+    int separator1 = incoming.indexOf(',');
+    int separator2 = incoming.lastIndexOf(',');
 
-    String incoming = "";
-    while (LoRa.available()) {
-      incoming += (char)LoRa.read();
-    }
+    float targetLatitude = incoming.substring(16, separator1).toFloat();
+    float targetLongitude = incoming.substring(separator1 + 1, separator2).toFloat();
+    int targetID = incoming.substring(separator2 + 1).toInt();
 
-    Serial.print("Message: ");
-    Serial.println(incoming);
+    long endTime = millis();
+    adjustedRoundTripTime = (endTime - startTime) / 2;
 
-    if (incoming.startsWith("calibrateResponse:")) {
-      // Process the received message and calculate adjusted round trip time
-      // Format: "calibrateResponse:latitude,longitude,targetID"
-      int separator1 = incoming.indexOf(',');
-      int separator2 = incoming.lastIndexOf(',');
+    float distance = haversine(baseLatitude, baseLongitude, targetLatitude, targetLongitude);
+    Serial.print("Distance to target ");
+    Serial.print("Distance to target ");
+    Serial.print(targetID);
+    Serial.print(": ");
+    Serial.println(distance);
 
-      float targetLatitude = incoming.substring(16, separator1).toFloat();
-      float targetLongitude = incoming.substring(separator1 + 1, separator2).toFloat();
-      int targetID = incoming.substring(separator2 + 1).toInt();
+  } else if (incoming.startsWith("shotTriggerResponse:")) {
+    int targetID = incoming.substring(18).toInt();
+    long endTime = millis();
+    long elapsedTime = endTime - shotTriggerTime - adjustedRoundTripTime;
 
-      long endTime = millis();
-      adjustedRoundTripTime = (endTime - startTime) / 2;
-
-      // Calculate the distance between base and target
-      float distance = calculateDistance(baseLatitude, baseLongitude, targetLatitude, targetLongitude);
-      Serial.print("Distance to target ");
-      Serial.print(targetID);
-      Serial.print(": ");
-      Serial.println(distance);
-    } else if (incoming.startsWith("shotTriggerResponse:")) {
-      // Process the received message, calculate and store the impact time
-      // Format: "shotTriggerResponse:targetID"
-      int targetID = incoming.substring(19).toInt();
-
-      long endTime = millis();
-      long impactTime = endTime - shotTriggerTime - adjustedRoundTripTime;
-
-      if (impactCount < numTargets) {
-        impactTimes[impactCount] = impactTime;
-        impactCount++;
-      } else {
-        // Shift the array to the left and add the new impact time
-        for (int i = 0; i < numTargets - 1; i++) {
-          impactTimes[i] = impactTimes[i + 1];
-        }
-        impactTimes[numTargets - 1] = impactTime;
+    if (impactCount < numTargets) {
+      impactTimes[impactCount] = elapsedTime;
+      impactCount++;
+    } else {
+      for (int i = 0; i < numTargets - 1; i++) {
+        impactTimes[i] = impactTimes[i + 1];
       }
-
-      // Calculate the average impact time
-      float avgImpactTime = 0;
-      for (int i = 0; i < impactCount; i++) {
-        avgImpactTime += impactTimes[i];
-      }
-      avgImpactTime /= impactCount;
-
-      Serial.print("Target ");
-      Serial.print(targetID);
-      Serial.print(" impact time: ");
-      Serial.print(impactTime);
-      Serial.println(" ms");
-      Serial.print("Average impact time: ");
-      Serial.print(avgImpactTime);
-      Serial.println(" ms");
-    }
-  }
-
-  void sendShotTrigger() {
-    String response = "shotTrigger:" + targetID;
-    sendMessage(shotTrigger);
-  }
-
-
-  //LoRa Message formation and TX functions
-  void sendMessage(String response) {
-    // Check if there's enough space for the message
-    if (response.length() > 250) {
-
-      Serial.println("Message too long.");
-      return;
+      impactTimes[numTargets - 1] = elapsedTime;
     }
 
-    LoRa.beginPacket();
-    LoRa.write(destination);
-    LoRa.write(localAddress);
-    LoRa.write(msgCount);
-    LoRa.write(response.length());
-
-    // Write the message string to the packet
-    for (size_t i = 0; i < response.length(); i++) {
-      LoRa.write(response[i]);
+    double sum = 0;
+    for (int i = 0; i < impactCount; i++) {
+      sum += impactTimes[i];
     }
+    double average = sum / impactCount;
 
-    LoRa.endPacket();
-    msgCount++;
+    Serial.print("Impact time for target ");
+    Serial.print(targetID);
+    Serial.print(": ");
+    Serial.println(elapsedTime);
+    Serial.print("Average impact time: ");
+    Serial.println(average);
   }
-
-
-
-  / GPS Functions Here
-
-      String
-      getLocation() {
-    smartDelay(1000);  // Wait for a short time to collect GPS data
-
-    if (gps.location.isValid()) {
-      float baseLatitude = gps.location.lat();
-      float baseLongitude = gps.location.lng();
-
-      String location = String(baseLatitude, 6) + "," + String(baseLongitude, 6);
-      return location;
-    } else {
-      Serial.println("GPS location is not valid.");
-      return "INVALID";
-    }
-  }
-
-  // This custom version of delay() ensures that the gps object
-  // is being "fed".
-  static void smartDelay(unsigned long ms) {
-    unsigned long start = millis();
-    do {
-      while (hs.available())
-        gps.encode(hs.read());
-    } while (millis() - start < ms);
-  }
-
-  static void printFloat(float val, bool valid, int len, int prec) {
-    if (!valid) {
-      while (len-- > 1)
-        Serial.print('*');
-      Serial.print(' ');
-    } else {
-      Serial.print(val, prec);
-      int vi = abs((int)val);
-      int flen = prec + (val < 0.0 ? 2 : 1);  // . and -
-      flen += vi >= 1000 ? 4 : vi >= 100 ? 3
-                             : vi >= 10  ? 2
-                                         : 1;
-      for (int i = flen; i < len; ++i)
-        Serial.print(' ');
-    }
-    smartDelay(0);
-  }
-
-  static void printInt(unsigned long val, bool valid, int len) {
-    char sz[32] = "*****************";
-    if (valid)
-      sprintf(sz, "%ld", val);
-    sz[len] = 0;
-    for (int i = strlen(sz); i < len; ++i)
-      sz[i] = ' ';
-    if (len > 0)
-      sz[len - 1] = ' ';
-    Serial.print(sz);
-    smartDelay(0);
-  }
-
-  static void printDateTime(TinyGPSDate & d, TinyGPSTime & t) {
-    if (!d.isValid()) {
-      Serial.print(F("********** "));
-    } else {
-      char sz[32];
-      sprintf(sz, "%02d/%02d/%02d ", d.month(), d.day(), d.year());
-      Serial.print(sz);
-    }
-
-    if (!t.isValid()) {
-      Serial.print(F("******** "));
-    } else {
-      char sz[32];
-      sprintf(sz, "%02d:%02d:%02d ", t.hour(), t.minute(), t.second());
-      Serial.print(sz);
-    }
-
-    printInt(d.age(), d.isValid(), 5);
-    smartDelay(0);
-  }
-
-  static void printStr(const char *str, int len) {
-    int slen = strlen(str);
-    for (int i = 0; i < len; ++i)
-      Serial.print(i < slen ? str[i] : ' ');
-    smartDelay(0);
-  }
+}
