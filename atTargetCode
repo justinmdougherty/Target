@@ -8,6 +8,10 @@
 #define dio0 7
 
 const int targetID = 1;
+bool waitForImpact = false;
+const int triggerPin = 14;
+
+
 
 // The TinyGPSPlus object
 TinyGPSPlus gps;
@@ -24,7 +28,7 @@ byte incomingLength;
 
 void setup() {
   Serial.begin(115200);
-  Serial1.begin(9600);
+  hs.begin(9600);
   Serial.println("LoRa Receiver");
   LoRa.setPins(ss, rst, dio0);
   gps.init();
@@ -36,19 +40,24 @@ void setup() {
   Serial.println("LoRa Initializing OK!");
 
   pinMode(triggerPin, INPUT_PULLUP);
-  digitalWrite(13, LOW);
+  digitalWrite(14, LOW);
 }
 
 void loop() {
-  onReceive(LoRa.parsePacket());
+  if (waitForImpact) {
+    impactTriggerEvent();
+  }
 
-
+  int packetSize = LoRa.parsePacket();
+  if (packetSize) {
+    onReceive(packetSize);
+  }
   if (hs.available()) {
     gps.encode(hs.read());
     smartDelay(10);
   }
-  impactTriggerEvent();
 }
+
 
 //LoRa message received function
 void onReceive(int packetSize) {
@@ -73,47 +82,43 @@ void onReceive(int packetSize) {
   Serial.print("Message: ");
   Serial.println(incoming);
 
-  // Check if the received message is a "calibrate" message
   if (incoming.startsWith("calibrate")) {
-    // Get the target's GPS location
     getLocation();
 
-    
-    // Create the response message for calibrate
     String calibrateResponse = "calibrateResponse:";
     calibrateResponse += String(targetLatitude) + "," + String(targetLongitude) + "," + String(targetID);
 
-    // Send the response
     sendMessage(calibrateResponse);
 
-  // Check if the received message is a "shotTrigger" message
-  }else{
-    if (incoming.startsWith("shotTrigger")) {
-      digitalWrite(13, HIGH);
-      delay(1000);
-      digitalWrite(13, LOW);
+  } else if (incoming.startsWith("shotTrigger")) {
+    digitalWrite(13, HIGH);
+    delay(1000);
+    digitalWrite(13, LOW);
 
-   // Create the response message
-    String shotTriggerResponse = "shotTriggerResponse:";
-    shotTriggerResponse += String(targetID);
-
-    // Send the response
-    sendMessage(shotTriggerResponse);      
-    }
-
+    waitForImpact = true;  // Set waitForImpact to true when shotTrigger message is received
   }
-  
 }
 
-//When target is triggered build message response and send it to basestation
-void impactTriggerEvent() {
 
-  if (digitalRead(triggerPin) == LOW) {
+//When target receives a message with the correct targetID, wait to be triggered, build message response, and send it to the base station
+void impactTriggerEvent() {
+  // Wait for impact
+  bool impactDetected = waitForImpact();
+  if (impactDetected) {
     String impactTriggerResponse = "hit:" + String(targetID);
     sendMessage(impactTriggerResponse);
-    Serial.println("Trigger event occurred. Message sent: " + String impactTriggerResponse);
+    Serial.println("Trigger event occurred. Message sent: " + impactTriggerResponse);
   }
 }
+
+bool waitForImpact() {
+  bool impactDetected = false;
+  if (digitalRead(triggerPin) == LOW) {
+    impactDetected = true;
+  }
+  return impactDetected;
+}
+
 
 //Calibration response function
 void sendMessage(String response) {
