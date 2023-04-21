@@ -1,7 +1,5 @@
-/*great that worked. now onto the next task. the base station is a component of this TFT and I would like to display the 
-information that is gathered in each of the functions on the TFT, such as the distance to the target once the calibrate 
-function is triggered, a hit counter when the atTarget code sends the and provide some soft buttons via the touch screen 
-for calibrate function, and the hit counter reset.
+/* 
+4/20/2023 - Need to add resetShotStrigger message and stop waitForTrigger
 */
 
 #include <SPI.h>
