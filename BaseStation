@@ -103,7 +103,7 @@ void loop() {
   readCalibrateTrigger();
   readShotTrigger();
 
-   int packetSize = LoRa.parsePacket();
+  int packetSize = LoRa.parsePacket();
   if (packetSize) {
     onReceive(packetSize);
   }
@@ -150,10 +150,11 @@ void checkTouch() {
     }
     // Average time reset button
     if (x >= BUTTON_AVG_RESET_X && x <= BUTTON_AVG_RESET_X + BUTTON_WIDTH && y >= BUTTON_AVG_RESET_Y && y <= BUTTON_AVG_RESET_Y + BUTTON_HEIGHT) {
-      resetAverageTime();
+      resetAvgTime();
     }
   }
 }
+
 
 
 void getLocation() {
@@ -206,7 +207,7 @@ void resetHitCounter() {
 }
 
 void updateHitCounterDisplay() {
-  lcd.fillRect(160, 150, 80, 20, TFT_BLACK); // Clear the previous hit counter value
+  lcd.fillRect(160, 150, 80, 20, TFT_BLACK);  // Clear the previous hit counter value
   lcd.setTextSize(2);
   lcd.setTextColor(TFT_WHITE);
   lcd.setCursor(160, 150);
@@ -275,9 +276,12 @@ void resetHitCounter() {
   // Reset your hit counter variable here
 }
 
-void resetAverageTime() {
-  // Reset your average time variable here
+void resetAvgTime() {
+  avgTime = 0;
+  shotCount = 0;
+  displayAvgTime();
 }
+
 
 void onReceive(int packetSize) {
   if (packetSize == 0) return;
@@ -335,7 +339,7 @@ void onReceive(int packetSize) {
     Serial.println(elapsedTime);
     Serial.print("Average impact time: ");
     Serial.println(average);
-  
+
   } else if (incoming.startsWith("hit:")) {
     int receivedTargetID = incoming.substring(4).toInt();
     if (receivedTargetID == targetID) {
