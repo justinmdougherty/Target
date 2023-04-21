@@ -49,8 +49,8 @@ void setup() {
 }
 
 void loop() {
-  if (waitForImpact) {
-    impactTriggerEvent();
+  if (waitForImpact()) {
+    impactTriggerEvent(false);
   }
 
   int packetSize = LoRa.parsePacket();
