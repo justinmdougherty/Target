@@ -1,16 +1,21 @@
+/*great that worked. now onto the next task. the base station is a component of this TFT and I would like to display the 
+information that is gathered in each of the functions on the TFT, such as the distance to the target once the calibrate 
+function is triggered, a hit counter when the atTarget code sends the and provide some soft buttons via the touch screen 
+for calibrate function, and the hit counter reset.
+*/
+
 #include <SPI.h>
 #include <LoRa.h>
 #include <TinyGPS++.h>
-#include <math.h>
 
 #define ss 8
 #define rst 4
 #define dio0 7
 
 const int targetID = 1;
-bool waitForImpact = false;
 const int triggerPin = 14;
-
+float targetLatitude;
+float targetLongitude;
 
 
 // The TinyGPSPlus object
@@ -31,7 +36,7 @@ void setup() {
   hs.begin(9600);
   Serial.println("LoRa Receiver");
   LoRa.setPins(ss, rst, dio0);
-  gps.init();
+  //gps.init();
 
   while (!LoRa.begin(915E6)) {
     Serial.println(".");
@@ -66,6 +71,7 @@ void onReceive(int packetSize) {
   byte incomingMsgId;
   int incomingLength;
 
+
   if (packetSize == 0) return;
 
   recipient = LoRa.read();
@@ -95,17 +101,18 @@ void onReceive(int packetSize) {
     delay(1000);
     digitalWrite(13, LOW);
 
-    waitForImpact = true;  // Set waitForImpact to true when shotTrigger message is received
+    impactTriggerEvent(true);  // Call impactTriggerEvent
   }
 }
-
-
 //When target receives a message with the correct targetID, wait to be triggered, build message response, and send it to the base station
-void impactTriggerEvent() {
+void impactTriggerEvent(bool shotTriggerReceived) {
   // Wait for impact
   bool impactDetected = waitForImpact();
   if (impactDetected) {
     String impactTriggerResponse = "hit:" + String(targetID);
+    if (shotTriggerReceived) {
+      impactTriggerResponse += ":shotTrigger";
+    }
     sendMessage(impactTriggerResponse);
     Serial.println("Trigger event occurred. Message sent: " + impactTriggerResponse);
   }
@@ -120,8 +127,11 @@ bool waitForImpact() {
 }
 
 
-//Calibration response function
+//LoRa response function
 void sendMessage(String response) {
+  int destination;
+  int msgCount;
+
   // Check if there's enough space for the message
   if (response.length() > 250) {
 
