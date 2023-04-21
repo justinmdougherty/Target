@@ -1,4 +1,6 @@
 #include <SPI.h>
+#define LGFX_AUTODETECT
+#include <LovyanGFX.hpp>
 #include <LoRa.h>
 #include <TinyGPS++.h>
 #include <math.h>
@@ -9,6 +11,29 @@
 #define SS 1
 #define rst 5
 #define dio0 4
+
+
+//setup TFT
+static LGFX lcd;
+#define ROTATION 3
+
+//setup touch
+#include <FT6x36.h>
+FT6x36 ts = FT6x36();
+
+// Soft button coordinates and dimensions
+#define BUTTON_CALIBRATE_X 10
+#define BUTTON_CALIBRATE_Y 100
+#define BUTTON_WIDTH 100
+#define BUTTON_HEIGHT 40
+
+#define BUTTON_HIT_RESET_X 130
+#define BUTTON_HIT_RESET_Y 100
+
+#define BUTTON_AVG_RESET_X 250
+#define BUTTON_AVG_RESET_Y 100
+
+
 
 const int triggerPin = 14;
 const int triggerID = 1;
@@ -51,14 +76,72 @@ void setup() {
   LoRa.onReceive(onReceive);
   LoRa.receive();
 
+  lcd.init();
+  lcd.setRotation(ROTATION);
+  lcd.fillScreen(TFT_BLACK);
+  lcd.setCursor(5, 25);
+  lcd.setTextColor(TFT_RED);
+  lcd.setTextSize(2);
+  lcd.println("Loading...");
+  delay(2000);
+  lcd.fillScreen(TFT_BLACK);
+  drawButtons();
+
   pinMode(triggerPin, INPUT_PULLUP);
 }
 
+unsigned long previousMillis = 0;
+const long interval = 1000;
+
 void loop() {
-  getLocation();
-  readCalibrateTrigger();
-  readShotTrigger();
-  delay(1000);
+  unsigned long currentMillis = millis();
+
+  checkTouch();
+
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+
+    getLocation();
+    readCalibrateTrigger();
+    readShotTrigger();
+  }
+}
+
+
+void drawButtons() {
+  // Draw calibrate button
+  lcd.drawRect(BUTTON_CALIBRATE_X, BUTTON_CALIBRATE_Y, BUTTON_WIDTH, BUTTON_HEIGHT, TFT_WHITE);
+  lcd.setCursor(BUTTON_CALIBRATE_X + 10, BUTTON_CALIBRATE_Y + 15);
+  lcd.print("Calibrate");
+
+  // Draw hit counter reset button
+  lcd.drawRect(BUTTON_HIT_RESET_X, BUTTON_HIT_RESET_Y, BUTTON_WIDTH, BUTTON_HEIGHT, TFT_WHITE);
+  lcd.setCursor(BUTTON_HIT_RESET_X + 10, BUTTON_HIT_RESET_Y + 15);
+  lcd.print("Reset Hits");
+
+  // Draw average time reset button
+  lcd.drawRect(BUTTON_AVG_RESET_X, BUTTON_AVG_RESET_Y, BUTTON_WIDTH, BUTTON_HEIGHT, TFT_WHITE);
+  lcd.setCursor(BUTTON_AVG_RESET_X + 10, BUTTON_AVG_RESET_Y + 15);
+  lcd.print("Reset Avg");
+}
+
+void checkTouch() {
+  if (ts.touched()) {
+    int16_t x, y;
+    uint8_t z;
+    ts.getPoint(x, y, z);
+
+    if (x >= BUTTON_CALIBRATE_X && x <= BUTTON_CALIBRATE_X + BUTTON_WIDTH && y >= BUTTON_CALIBRATE_Y && y <= BUTTON_CALIBRATE_Y + BUTTON_HEIGHT) {
+      // Calibrate button pressed
+      calibrate();
+    } else if (x >= BUTTON_HIT_RESET_X && x <= BUTTON_HIT_RESET_X + BUTTON_WIDTH && y >= BUTTON_HIT_RESET_Y && y <= BUTTON_HIT_RESET_Y + BUTTON_HEIGHT) {
+      // Reset hit counter button pressed
+      resetHitCounter();
+    } else if (x >= BUTTON_AVG_RESET_X && x <= BUTTON_AVG_RESET_X + BUTTON_WIDTH && y >= BUTTON_AVG_RESET_Y && y <= BUTTON_AVG_RESET_Y + BUTTON_HEIGHT) {
+      // Reset average time button pressed
+      resetAverageTime();
+    }
+  }
 }
 
 void getLocation() {
@@ -90,6 +173,45 @@ void sendMessage(String message) {
   LoRa.beginPacket();
   LoRa.print(message);
   LoRa.endPacket();
+}
+
+void displayDistance(float distance) {
+  lcd.setCursor(0, 20);
+  lcd.print("Distance: ");
+  lcd.print(distance);
+  lcd.print(" meters");
+}
+
+void displayHitCounter(int hitCount) {
+  lcd.setCursor(0, 40);
+  lcd.print("Hit counter: ");
+  lcd.print(hitCount);
+}
+
+void displayShotTime(float shotTime) {
+  lcd.setCursor(0, 60);
+  lcd.print("Shot time: ");
+  lcd.print(shotTime);
+  lcd.print(" ms");
+}
+
+void displayAverageTime(float averageTime) {
+  lcd.setCursor(0, 80);
+  lcd.print("Average time: ");
+  lcd.print(averageTime);
+  lcd.print(" ms");
+}
+
+void calibrate() {
+  // Add your calibration logic here
+}
+
+void resetHitCounter() {
+  // Reset your hit counter variable here
+}
+
+void resetAverageTime() {
+  // Reset your average time variable here
 }
 
 void onReceive(int packetSize) {
@@ -149,4 +271,73 @@ void onReceive(int packetSize) {
     Serial.print("Average impact time: ");
     Serial.println(average);
   }
+}
+
+// This custom version of delay() ensures that the gps object
+// is being "fed".
+static void smartDelay(unsigned long ms) {
+  unsigned long start = millis();
+  do {
+    while (ss.available())
+      gps.encode(ss.read());
+  } while (millis() - start < ms);
+}
+
+static void printFloat(float val, bool valid, int len, int prec) {
+  if (!valid) {
+    while (len-- > 1)
+      Serial.print('*');
+    Serial.print(' ');
+  } else {
+    Serial.print(val, prec);
+    int vi = abs((int)val);
+    int flen = prec + (val < 0.0 ? 2 : 1);  // . and -
+    flen += vi >= 1000 ? 4 : vi >= 100 ? 3
+                           : vi >= 10  ? 2
+                                       : 1;
+    for (int i = flen; i < len; ++i)
+      Serial.print(' ');
+  }
+  smartDelay(0);
+}
+
+static void printInt(unsigned long val, bool valid, int len) {
+  char sz[32] = "*****************";
+  if (valid)
+    sprintf(sz, "%ld", val);
+  sz[len] = 0;
+  for (int i = strlen(sz); i < len; ++i)
+    sz[i] = ' ';
+  if (len > 0)
+    sz[len - 1] = ' ';
+  Serial.print(sz);
+  smartDelay(0);
+}
+
+static void printDateTime(TinyGPSDate &d, TinyGPSTime &t) {
+  if (!d.isValid()) {
+    Serial.print(F("********** "));
+  } else {
+    char sz[32];
+    sprintf(sz, "%02d/%02d/%02d ", d.month(), d.day(), d.year());
+    Serial.print(sz);
+  }
+
+  if (!t.isValid()) {
+    Serial.print(F("******** "));
+  } else {
+    char sz[32];
+    sprintf(sz, "%02d:%02d:%02d ", t.hour(), t.minute(), t.second());
+    Serial.print(sz);
+  }
+
+  printInt(d.age(), d.isValid(), 5);
+  smartDelay(0);
+}
+
+static void printStr(const char *str, int len) {
+  int slen = strlen(str);
+  for (int i = 0; i < len; ++i)
+    Serial.print(i < slen ? str[i] : ' ');
+  smartDelay(0);
 }
