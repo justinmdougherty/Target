@@ -1,3 +1,69 @@
+//To add later 4/21/2023
+
+/*
+Add a function displayAvgTime() to display the average time on the screen. This function is similar to displayShotTime().
+
+void displayAvgTime() {
+  // Clear the previous average time value displayed on the screen
+  lcd.fillRect(0, 80, 320, 20, TFT_BLACK);
+
+  // Set text color and size
+  lcd.setTextColor(TFT_WHITE);
+  lcd.setTextSize(2);
+
+  // Display the new average time value
+  lcd.setCursor(0, 80);
+  lcd.print("Average time: ");
+  lcd.print(avgTime);
+  lcd.print(" ms");
+}
+
+Update the onReceive() function to calculate and display the average time after receiving a shotTriggerResponse:
+
+} else if (incoming.startsWith("shotTriggerResponse:")) {
+    int targetID = incoming.substring(18).toInt();
+    long endTime = millis();
+    long elapsedTime = endTime - shotTriggerTime - adjustedRoundTripTime;
+
+    if (impactCount < numTargets) {
+      impactTimes[impactCount] = elapsedTime;
+      impactCount++;
+    } else {
+      for (int i = 0; i < numTargets - 1; i++) {
+        impactTimes[i] = impactTimes[i + 1];
+      }
+      impactTimes[numTargets - 1] = elapsedTime;
+    }
+
+    double sum = 0;
+    for (int i = 0; i < impactCount; i++) {
+      sum += impactTimes[i];
+    }
+    avgTime = sum / impactCount;
+
+    Serial.print("Impact time for target ");
+    Serial.print(targetID);
+    Serial.print(": ");
+    Serial.println(elapsedTime);
+    Serial.print("Average impact time: ");
+    Serial.println(avgTime);
+
+    displayShotTime(elapsedTime);
+    displayAvgTime(); // Add this line to update the average time display
+}
+
+
+
+*/
+
+
+
+
+
+
+
+
+
 #include <SPI.h>
 #define LGFX_AUTODETECT
 #include <LovyanGFX.hpp>
@@ -33,12 +99,15 @@ FT6x36 ts = FT6x36();
 #define BUTTON_AVG_RESET_X 250
 #define BUTTON_AVG_RESET_Y 100
 
-
+bool debugMode = true; //Turn on or off debug mode
 
 const int triggerPin = 14;
 const int triggerID = 1;
 
 int hitCounter = 0;
+float distance = 0.0;
+float avgTime = 0.0;
+int shotCount = 0;
 
 TinyGPSPlus gps;
 #define hs Serial1
@@ -70,7 +139,7 @@ double haversine(double lat1, double lon1, double lat2, double lon2) {
 }
 
 void setup() {
-  Serial.begin(115200);
+  
   hs.begin(9600);
   SPI.begin(SCK, MISO, MOSI, SS);
   LoRa.setPins(SS, rst, dio0);
@@ -89,8 +158,15 @@ void setup() {
   lcd.fillScreen(TFT_BLACK);
   drawButtons();
   updateHitCounterDisplay();
+  displayHitCounter();
+  resetDistance();
 
   pinMode(triggerPin, INPUT_PULLUP);
+
+  if (debugMode) {
+    Serial.begin(115200);
+    Serial.println(F("Simple GPS Location Test"));
+  }
 }
 
 unsigned long previousMillis = 0;
@@ -111,10 +187,11 @@ void loop() {
     gps.encode(hs.read());
     smartDelay(10);
   }
-
-  if (currentMillis - previousMillis >= interval) {
-    previousMillis = currentMillis;
-    getLocation();
+  if (debugMode) {
+    Serial.print(F("Latitude: "));
+    Serial.println(gps.location.lat(), 6);
+    Serial.print(F("Longitude: "));
+    Serial.println(gps.location.lng(), 6);
   }
 }
 
@@ -138,7 +215,7 @@ void drawButtons() {
 
 void checkTouch() {
   uint16_t x, y;
-  if (touch.touched() && touch.getXY(x, y)) {
+  if (ts.touched() && touch.getXY(x, y)) {
     // Calibrate button
     if (x >= BUTTON_CALIBRATE_X && x <= BUTTON_CALIBRATE_X + BUTTON_WIDTH && y >= BUTTON_CALIBRATE_Y && y <= BUTTON_CALIBRATE_Y + BUTTON_HEIGHT) {
       startTime = millis();
@@ -188,18 +265,26 @@ void sendMessage(String message) {
   LoRa.endPacket();
 }
 
-void displayDistance(float distance) {
-  lcd.setCursor(0, 20);
+void displayDistance() {
+  // Clear the previous distance value displayed on the screen
+  lcd.fillRect(0, 200, 320, 40, TFT_BLACK);
+
+  // Set text color and size
+  lcd.setTextColor(TFT_WHITE);
+  lcd.setTextSize(2);
+
+  // Display the new distance value
+  lcd.setCursor(10, 200);
   lcd.print("Distance: ");
   lcd.print(distance);
-  lcd.print(" meters");
+  lcd.print(" m");  // Assuming distance is in meters
 }
 
-void displayHitCounter(int hitCount) {
-  lcd.setCursor(0, 40);
-  lcd.print("Hit counter: ");
-  lcd.print(hitCount);
+void resetDistance() {
+  distance = 0.0;     // Reset the distance
+  displayDistance();  // Refresh the distance display
 }
+
 
 void resetHitCounter() {
   hitCounter = 0;
@@ -215,6 +300,13 @@ void updateHitCounterDisplay() {
   lcd.print(hitCounter);
 }
 
+void displayHitCounter() {
+  lcd.setCursor(10, 200);  // Adjust the position according to your layout
+  lcd.setTextSize(2);
+  lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+  lcd.print("Hits: ");
+  lcd.print(hitCounter);
+}
 
 void displayShotTime(float shotTime) {
   lcd.setCursor(0, 60);
@@ -230,23 +322,9 @@ void displayAverageTime(float averageTime) {
   lcd.print(" ms");
 }
 
-void updateDistanceDisplay(float adjustedRoundTripTime) {
-  // Clear the previous distance value displayed on the screen
-  lcd.fillRect(0, 200, 320, 40, TFT_BLACK);
-
-  // Set text color and size
-  lcd.setTextColor(TFT_WHITE);
-  lcd.setTextSize(2);
-
-  // Display the new distance value
-  lcd.setCursor(10, 200);
-  lcd.print("Adjusted RTT: ");
-  lcd.print(adjustedRoundTripTime);
-  lcd.print(" ms");
-}
-
 void calibrate() {
   // Add your calibration logic here
+  resetDistance();
   int separator1 = incoming.indexOf(',');
   int separator2 = incoming.lastIndexOf(',');
 
@@ -270,11 +348,6 @@ void calibrate() {
   lcd.printf("Distance to target %d: %.2f meters", targetID, distance);
 }
 
-
-
-void resetHitCounter() {
-  // Reset your hit counter variable here
-}
 
 void resetAvgTime() {
   avgTime = 0;
@@ -305,12 +378,13 @@ void onReceive(int packetSize) {
     long endTime = millis();
     adjustedRoundTripTime = (endTime - startTime) / 2;
 
-    float distance = haversine(baseLatitude, baseLongitude, targetLatitude, targetLongitude);
-    Serial.print("Distance to target ");
+    distance = haversine(baseLatitude, baseLongitude, targetLatitude, targetLongitude);  // Make sure 'distance' is declared as a global variable
     Serial.print("Distance to target ");
     Serial.print(targetID);
     Serial.print(": ");
     Serial.println(distance);
+
+    displayDistance();  // Add this line to update the distance display
 
   } else if (incoming.startsWith("shotTriggerResponse:")) {
     int targetID = incoming.substring(18).toInt();
