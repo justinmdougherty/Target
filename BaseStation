@@ -38,6 +38,8 @@ FT6x36 ts = FT6x36();
 const int triggerPin = 14;
 const int triggerID = 1;
 
+int hitCounter = 0;
+
 TinyGPSPlus gps;
 #define hs Serial1
 
@@ -86,6 +88,7 @@ void setup() {
   delay(2000);
   lcd.fillScreen(TFT_BLACK);
   drawButtons();
+  updateHitCounterDisplay();
 
   pinMode(triggerPin, INPUT_PULLUP);
 }
@@ -97,13 +100,21 @@ void loop() {
   unsigned long currentMillis = millis();
 
   checkTouch();
+  readCalibrateTrigger();
+  readShotTrigger();
+
+   int packetSize = LoRa.parsePacket();
+  if (packetSize) {
+    onReceive(packetSize);
+  }
+  if (hs.available()) {
+    gps.encode(hs.read());
+    smartDelay(10);
+  }
 
   if (currentMillis - previousMillis >= interval) {
     previousMillis = currentMillis;
-
     getLocation();
-    readCalibrateTrigger();
-    readShotTrigger();
   }
 }
 
@@ -126,23 +137,24 @@ void drawButtons() {
 }
 
 void checkTouch() {
-  if (ts.touched()) {
-    int16_t x, y;
-    uint8_t z;
-    ts.getPoint(x, y, z);
-
+  uint16_t x, y;
+  if (touch.touched() && touch.getXY(x, y)) {
+    // Calibrate button
     if (x >= BUTTON_CALIBRATE_X && x <= BUTTON_CALIBRATE_X + BUTTON_WIDTH && y >= BUTTON_CALIBRATE_Y && y <= BUTTON_CALIBRATE_Y + BUTTON_HEIGHT) {
-      // Calibrate button pressed
-      calibrate();
-    } else if (x >= BUTTON_HIT_RESET_X && x <= BUTTON_HIT_RESET_X + BUTTON_WIDTH && y >= BUTTON_HIT_RESET_Y && y <= BUTTON_HIT_RESET_Y + BUTTON_HEIGHT) {
-      // Reset hit counter button pressed
+      startTime = millis();
+      sendMessage("calibrate");
+    }
+    // Hit counter reset button
+    if (x >= BUTTON_HIT_RESET_X && x <= BUTTON_HIT_RESET_X + BUTTON_WIDTH && y >= BUTTON_HIT_RESET_Y && y <= BUTTON_HIT_RESET_Y + BUTTON_HEIGHT) {
       resetHitCounter();
-    } else if (x >= BUTTON_AVG_RESET_X && x <= BUTTON_AVG_RESET_X + BUTTON_WIDTH && y >= BUTTON_AVG_RESET_Y && y <= BUTTON_AVG_RESET_Y + BUTTON_HEIGHT) {
-      // Reset average time button pressed
+    }
+    // Average time reset button
+    if (x >= BUTTON_AVG_RESET_X && x <= BUTTON_AVG_RESET_X + BUTTON_WIDTH && y >= BUTTON_AVG_RESET_Y && y <= BUTTON_AVG_RESET_Y + BUTTON_HEIGHT) {
       resetAverageTime();
     }
   }
 }
+
 
 void getLocation() {
   while (hs.available() > 0) {
@@ -188,6 +200,21 @@ void displayHitCounter(int hitCount) {
   lcd.print(hitCount);
 }
 
+void resetHitCounter() {
+  hitCounter = 0;
+  updateHitCounterDisplay();
+}
+
+void updateHitCounterDisplay() {
+  lcd.fillRect(160, 150, 80, 20, TFT_BLACK); // Clear the previous hit counter value
+  lcd.setTextSize(2);
+  lcd.setTextColor(TFT_WHITE);
+  lcd.setCursor(160, 150);
+  lcd.print("Target 1: ");
+  lcd.print(hitCounter);
+}
+
+
 void displayShotTime(float shotTime) {
   lcd.setCursor(0, 60);
   lcd.print("Shot time: ");
@@ -202,9 +229,47 @@ void displayAverageTime(float averageTime) {
   lcd.print(" ms");
 }
 
+void updateDistanceDisplay(float adjustedRoundTripTime) {
+  // Clear the previous distance value displayed on the screen
+  lcd.fillRect(0, 200, 320, 40, TFT_BLACK);
+
+  // Set text color and size
+  lcd.setTextColor(TFT_WHITE);
+  lcd.setTextSize(2);
+
+  // Display the new distance value
+  lcd.setCursor(10, 200);
+  lcd.print("Adjusted RTT: ");
+  lcd.print(adjustedRoundTripTime);
+  lcd.print(" ms");
+}
+
 void calibrate() {
   // Add your calibration logic here
+  int separator1 = incoming.indexOf(',');
+  int separator2 = incoming.lastIndexOf(',');
+
+  float targetLatitude = incoming.substring(16, separator1).toFloat();
+  float targetLongitude = incoming.substring(separator1 + 1, separator2).toFloat();
+  int targetID = incoming.substring(separator2 + 1).toInt();
+
+  long endTime = millis();
+  adjustedRoundTripTime = (endTime - startTime) / 2;
+
+  float distance = haversine(baseLatitude, baseLongitude, targetLatitude, targetLongitude);
+  Serial.print("Distance to target ");
+  Serial.print(targetID);
+  Serial.print(": ");
+  Serial.println(distance);
+
+  // Display the distance on the TFT screen
+  lcd.setTextColor(TFT_WHITE);
+  lcd.setTextSize(2);
+  lcd.setCursor(0, 50);
+  lcd.printf("Distance to target %d: %.2f meters", targetID, distance);
 }
+
+
 
 void resetHitCounter() {
   // Reset your hit counter variable here
@@ -270,8 +335,17 @@ void onReceive(int packetSize) {
     Serial.println(elapsedTime);
     Serial.print("Average impact time: ");
     Serial.println(average);
+  
+  } else if (incoming.startsWith("hit:")) {
+    int receivedTargetID = incoming.substring(4).toInt();
+    if (receivedTargetID == targetID) {
+      hitCounter++;
+      displayHitCounter();
+      Serial.println("Hit counter incremented.");
+    }
   }
 }
+
 
 // This custom version of delay() ensures that the gps object
 // is being "fed".
